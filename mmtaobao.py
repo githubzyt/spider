@@ -5,9 +5,16 @@ import requests
 from bs4 import BeautifulSoup
 import common
 import os
+import logging
+import json
 
 logger = common.get_logger(__name__)
+logger.setLevel(logging.DEBUG)
 
+proxies={
+    "http":"http://10.144.1.10:8080",
+    "https":"http://10.144.1.10:8080"
+}
 
 class TaobaoMM(object):
 
@@ -74,10 +81,22 @@ class MMTaobao(object):
         return photo_album_link
 
     def download_img(self,photo_album_link,mm_folder):
-        pass
+        logger.debug('photo_album_link=%s' %photo_album_link)
+        image_name=photo_album_link.split('/')[-1]
+        photo_dir=os.path.join(mm_folder,'photos')
+        if ! os.path.exists(photo_dir):
+            os.makedirs(photo_dir)
+        image_full_path=os.path.join(photos_dir,image_name)
+        logger.debug('download file from %s to %s' %(photo_album_link,image_full_path))
+        r=requests.get(photo_album_link,stream=True)
+        with open(image_full_path,'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+        return image_full_path
 
-    def save_mms_info(self):
-        mm_list = self.get_mm_list()
+    def save_mms_info(self,total_page=3):
+        mm_list = self.get_mm_taobao(total_page=total_page)
         for mm in mm_list:
             self.save_to_disk(mm.name,mm.age,mm.location,mm.home_page)
 
@@ -87,14 +106,20 @@ class MMTaobao(object):
         if not os.path.exists(mm_folder):
             os.makedirs(mm_folder)
         with open(mm_file,'w') as f:
-            f.write('name: %s\n' %name)
-            f.write('age: %s\n' %age)
-            f.write('location: %s\n' %location)
+            f.write('name: %s\n' %name.encode(self.page_encode))
+            f.write('age: %s\n' %age.encode(self.page_encode))
+            f.write('location: %s\n' %location.encode(self.page_encode))
             f.write('home page: %s\n' %home_page)
         photo_album_link=self.get_photo_album_link(home_page)
         self.download_img(photo_album_link,mm_folder)
 
+    def save_mm_info_by_mm_list(self,mm_list):
+        for mm in mm_list:
+            self.save_to_disk(mm.name,mm.age,mm.location,mm.home_page)
 
+    def save_mm_info_from_file(self,info_file):
+        mm_list=json.dumps(info_file)
+        self.save_mm_info_by_mm_list(mm_list)
 
 def test():
     with open('homepage.html', 'wb') as fd:
@@ -131,7 +156,8 @@ def test_photo_album():
         f.write(r.text.encode('utf-8'))
 
 if __name__ == '__main__':
-    # mt = MMTaobao()
-    # for mm in mt.get_mm_taobao():
-    #     print str(mm)
-    test_photo_album()
+    mt = MMTaobao()
+    mm_list=mt.get_mm_taobao(total_page=1)
+    # with open('info.json','w') as f:
+    #     json.dump(mm_list,f)
+    mt.save_mm_info_by_mm_list(mm_list)
