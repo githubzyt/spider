@@ -40,6 +40,7 @@ class MMTaobao(object):
         self.base_link = 'http://mm.taobao.com/json/request_top_list.htm'
         self.page_encode = 'utf-8'
         self.save_folder = 'taobaomm'
+        self.find_depth = 2
 
     def get_page_content(self, page_num):
         payload = {'page': page_num}
@@ -84,9 +85,9 @@ class MMTaobao(object):
         logger.debug('photo_album_link=%s' %photo_album_link)
         image_name=photo_album_link.split('/')[-1]
         photo_dir=os.path.join(mm_folder,'photos')
-        if ! os.path.exists(photo_dir):
+        if not os.path.exists(photo_dir):
             os.makedirs(photo_dir)
-        image_full_path=os.path.join(photos_dir,image_name)
+        image_full_path=os.path.join(photo_dir,image_name)
         logger.debug('download file from %s to %s' %(photo_album_link,image_full_path))
         r=requests.get(photo_album_link,stream=True)
         with open(image_full_path,'wb') as f:
@@ -112,6 +113,43 @@ class MMTaobao(object):
             f.write('home page: %s\n' %home_page)
         photo_album_link=self.get_photo_album_link(home_page)
         self.download_img(photo_album_link,mm_folder)
+
+    def download_img_new(self,home_page,mm_folder):
+        hrefs=[home_page]
+        depth=self.find_depth
+        analysis_in_url(home_page,depth)
+
+
+    def get_img_link(self,img_tag):
+        ori_img_link=img_tag.get('src').strip()
+        if ori_img_link.startswith('//'):
+            ori_img_link="http"+ori_img_link
+        return ori_img_link
+
+    def get_href_link(self,a_tag):
+        href=a_tag.get('href')
+        if href.startswith('//'):
+            href='http'+href
+        return href
+
+    def analysis_in_url(self,link,depth=None,base_link='http://mm.taobao.com/self'):
+        image_hrefs=[]
+        all_links=[]
+        if not depth:
+            depth = self.find_depth
+        r=requests.get(link)
+        data = r.text.encode(self.page_encode)
+        soup = BeautifulSoup(data, 'lxml')
+        for img_tag in soup.find_all('img'):
+            image_hrefs.append(self.get_img_link(img_tag))
+        new_depth=dpeth-1
+        if new_depth >=0:
+            for herf_tag in soup.find_all('a'):
+                href=self.get_href_link(herf_tag)
+                if href.startswith(base_link):
+                    all_links.append(href)
+        return image_hrefs,all_links,new_depth
+
 
     def save_mm_info_by_mm_list(self,mm_list):
         for mm in mm_list:
@@ -150,12 +188,13 @@ def test_home_page():
 
 
 def test_photo_album():
-    url = 'http://mm.taobao.com/self/model_album.htm?user_id=414457129'
-    with open('photo_album.htm', 'w') as f:
+    url = 'https://mm.taobao.com/self/model_info.htm?user_id=687471686&is_coment=false'
+    with open('model_info.htm', 'w') as f:
         r = requests.get(url)
         f.write(r.text.encode('utf-8'))
 
 if __name__ == '__main__':
+    # test_photo_album()
     mt = MMTaobao()
     mm_list=mt.get_mm_taobao(total_page=1)
     # with open('info.json','w') as f:
