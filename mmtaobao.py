@@ -7,13 +7,19 @@ import common
 import os
 import logging
 import json
+import threading
+# from multiprocessing import  Queue
+from Queue import Queue
+import time
 
+logging.basicConfig(level=logging.INFO,
+                    format='(%(threadName)-9s) %(message)s',)
 logger = common.get_logger(__name__)
 logger.setLevel(logging.DEBUG)
 
 proxies={
-    "http":"http://10.144.1.10:8080",
-    "https":"http://10.144.1.10:8080"
+    "http":"http://10.158.100.1:8080",
+    "https":"http://10.158.100.1:8080"
 }
 
 class TaobaoMM(object):
@@ -33,6 +39,90 @@ location: %s
 home page: %s
 ''' % (self.name.encode(self.encoding), self.age.encode(self.encoding), self.location.encode(self.encoding), self.home_page.encode(self.encoding))
 
+BUF_SIZE = 100
+image_que=Queue(BUF_SIZE)
+url_que = Queue(5000)
+
+class ImageDownloader(threading.Thread):
+
+    def __init__(self,group=None, target=None, name=None,
+                 args=(), kwargs=None, verbose=None):
+        super(ImageDownloader,self).__init__()
+        self.target = target
+        self.name = name
+
+    def run(self):
+        while True:
+            if not image_que.empty():
+                item = image_que.get()
+                logging.info('Getting ' + str(item) 
+                              + ' : ' + str(image_que.qsize()) + ' items in image queue')
+                self.download(item)
+        return
+
+    def download_img(self,item):
+        pass
+
+
+class URLAnalyzer(threading.Thread):
+
+    def __init__(self,group=None, target=None, name=None,
+                 args=(), kwargs=None, verbose=None):
+        super(URLAnalyzer,self).__init__()
+        self.target = target
+        self.name = name
+
+    def run(self):
+        while True:
+            if not url_que.empty():
+                item = url_que.get()
+                logging.info('Getting ' + str(item) 
+                              + ' : ' + str(url_que.qsize()) + ' items in url queue')
+                self.analysis_url(item)
+        return
+
+    def is_link_available(self,link):
+        if link.startswith('https://') or link.startswith('http://'):
+            return True
+        return False
+
+    def get_img_link(self,img_tag):
+        ori_img_link=img_tag.get('src')
+        if ori_img_link:
+            ori_img_link=ori_img_link.strip() 
+        if ori_img_link and ori_img_link.startswith('//'):
+            ori_img_link="http"+ori_img_link
+        return ori_img_link
+
+    def get_href_link(self,a_tag):
+        href=a_tag.get('href')
+        if href:
+            href=href.strip()
+        if href and href.startswith('//'):
+            href='http'+href
+        return href
+
+    def analysis_url(self,item,page_encode='utf-8',base_link='http://mm.taobao.com/self'):
+        logger.info('in url analysis thread: %s %s' %(self.name, item))
+        link, depth = item
+        if not self.is_link_available(link):
+            return
+        r = requests.get(link,proxies=proxies)
+        data = r.text.encode(page_encode)
+        soup = BeautifulSoup(data, 'lxml',from_encoding='utf-8')
+        for img_tag in soup.find_all('img'):
+            img_link=self.get_img_link(img_tag)
+            if img_link and self.is_link_available(img_link):
+                logging.info('get a new image link %s' %img_link)
+                image_que.put(img_link)
+        new_depth=depth-1
+        if new_depth >= 0:
+            for herf_tag in soup.find_all('a'):
+                href=self.get_href_link(herf_tag)
+                logging.info('new href %s' %href)
+                if href and self.is_link_available(href) and href.startswith(base_link):
+                    logging.info('put %s in url queue' %href)
+                    url_que.put((href, new_depth))
 
 class MMTaobao(object):
 
@@ -40,11 +130,11 @@ class MMTaobao(object):
         self.base_link = 'http://mm.taobao.com/json/request_top_list.htm'
         self.page_encode = 'utf-8'
         self.save_folder = 'taobaomm'
-        self.find_depth = 2
+        self.find_depth = 3
 
     def get_page_content(self, page_num):
         payload = {'page': page_num}
-        r = requests.get(self.base_link, params=payload)
+        r = requests.get(self.base_link, params=payload,proxies=proxies)
         data = r.text.encode(self.page_encode)
         logger.info('Get info from %s' % r.url)
         with open('mmtaobao.html', 'wb') as fd:
@@ -111,49 +201,22 @@ class MMTaobao(object):
             f.write('age: %s\n' %age.encode(self.page_encode))
             f.write('location: %s\n' %location.encode(self.page_encode))
             f.write('home page: %s\n' %home_page)
-        photo_album_link=self.get_photo_album_link(home_page)
-        self.download_img(photo_album_link,mm_folder)
-
-    def download_img_new(self,home_page,mm_folder):
-        hrefs=[home_page]
-        depth=self.find_depth
-        analysis_in_url(home_page,depth)
-
-
-    def get_img_link(self,img_tag):
-        ori_img_link=img_tag.get('src').strip()
-        if ori_img_link.startswith('//'):
-            ori_img_link="http"+ori_img_link
-        return ori_img_link
-
-    def get_href_link(self,a_tag):
-        href=a_tag.get('href')
-        if href.startswith('//'):
-            href='http'+href
-        return href
-
-    def analysis_in_url(self,link,depth=None,base_link='http://mm.taobao.com/self'):
-        image_hrefs=[]
-        all_links=[]
-        if not depth:
-            depth = self.find_depth
-        r=requests.get(link)
-        data = r.text.encode(self.page_encode)
-        soup = BeautifulSoup(data, 'lxml')
-        for img_tag in soup.find_all('img'):
-            image_hrefs.append(self.get_img_link(img_tag))
-        new_depth=dpeth-1
-        if new_depth >=0:
-            for herf_tag in soup.find_all('a'):
-                href=self.get_href_link(herf_tag)
-                if href.startswith(base_link):
-                    all_links.append(href)
-        return image_hrefs,all_links,new_depth
 
 
     def save_mm_info_by_mm_list(self,mm_list):
+        logger.info('start save mm info')
+        url_analyzer=[URLAnalyzer(name='url analyser %s' %i) for i in range(3)]
+        image_analyzer=[ImageDownloader(name='image downloader %s' %i) for i in range(3)]
         for mm in mm_list:
+            logger.info('mm info:\n%s' %str(mm))
             self.save_to_disk(mm.name,mm.age,mm.location,mm.home_page)
+            url_que.put((mm.home_page,self.find_depth))
+        for u in url_analyzer:
+            u.start()
+        time.sleep(5)
+        for i in image_analyzer:
+            i.start()
+        logger.info('compelete save mm info')
 
     def save_mm_info_from_file(self,info_file):
         mm_list=json.dumps(info_file)
