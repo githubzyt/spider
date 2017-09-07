@@ -22,6 +22,9 @@ proxies={
     "https":"http://10.158.100.1:8080"
 }
 
+os.environ['http_proxy'] = 'http://10.158.100.1:8080'
+os.environ['https_proxy'] = 'http://10.158.100.1:8080'
+
 class TaobaoMM(object):
 
     def __init__(self, name, age, location, home_page):
@@ -107,7 +110,7 @@ class URLAnalyzer(threading.Thread):
         link, depth = item
         if not self.is_link_available(link):
             return
-        r = requests.get(link,proxies=proxies)
+        r = requests.get(link)
         data = r.text.encode(page_encode)
         soup = BeautifulSoup(data, 'lxml',from_encoding='utf-8')
         for img_tag in soup.find_all('img'):
@@ -134,7 +137,7 @@ class MMTaobao(object):
 
     def get_page_content(self, page_num):
         payload = {'page': page_num}
-        r = requests.get(self.base_link, params=payload,proxies=proxies)
+        r = requests.get(self.base_link, params=payload)
         data = r.text.encode(self.page_encode)
         logger.info('Get info from %s' % r.url)
         with open('mmtaobao.html', 'wb') as fd:
@@ -208,12 +211,11 @@ class MMTaobao(object):
         url_analyzer=[URLAnalyzer(name='url analyser %s' %i) for i in range(3)]
         image_analyzer=[ImageDownloader(name='image downloader %s' %i) for i in range(3)]
         for mm in mm_list:
-            logger.info('mm info:\n%s' %str(mm))
+            logging.info('mm info:\n%s' %str(mm))
             self.save_to_disk(mm.name,mm.age,mm.location,mm.home_page)
             url_que.put((mm.home_page,self.find_depth))
         for u in url_analyzer:
             u.start()
-        time.sleep(5)
         for i in image_analyzer:
             i.start()
         logger.info('compelete save mm info')
@@ -257,9 +259,6 @@ def test_photo_album():
         f.write(r.text.encode('utf-8'))
 
 if __name__ == '__main__':
-    # test_photo_album()
     mt = MMTaobao()
     mm_list=mt.get_mm_taobao(total_page=1)
-    # with open('info.json','w') as f:
-    #     json.dump(mm_list,f)
     mt.save_mm_info_by_mm_list(mm_list)
