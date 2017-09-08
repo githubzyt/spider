@@ -64,19 +64,21 @@ class ImageDownloader(threading.Thread):
         return
 
     def download_img(self,item):
-        logging.debug('photo_album_link=%s' %photo_album_link)
-        image_name=photo_album_link.split('/')[-1]
+        link, mm_name = item
+        image_name=link.split('/')[-1]
+        mm_folder = os.path.join('taobaomm', mm_name)
         photo_dir=os.path.join(mm_folder,'photos')
         if not os.path.exists(photo_dir):
             os.makedirs(photo_dir)
         image_full_path=os.path.join(photo_dir,image_name)
-        logging.debug('download file from %s to %s' %(photo_album_link,image_full_path))
-        r=requests.get(photo_album_link,stream=True)
+        if os.path.exists(image_full_path):
+            return
+        logging.debug('download file from %s to %s' %(link,image_full_path))
+        r=requests.get(link,stream=True)
         with open(image_full_path,'wb') as f:
             for chunk in r.iter_content(chunk_size=1024):
                 if chunk:
                     f.write(chunk)
-        return image_full_path
 
 class URLAnalyzer(threading.Thread):
 
@@ -117,7 +119,7 @@ class URLAnalyzer(threading.Thread):
         return href
 
     def analysis_url(self,item,page_encode='utf-8',base_link='http://mm.taobao.com/self'):
-        link, depth = item
+        link, depth, name= item
         if not self.is_link_available(link):
             return
         r = requests.get(link)
@@ -127,22 +129,22 @@ class URLAnalyzer(threading.Thread):
             img_link=self.get_img_link(img_tag)
             if img_link and self.is_link_available(img_link):
                 logging.debug('put a new image link %s' %img_link)
-                image_que.put(img_link)
+                image_que.put((img_link, name))
         new_depth=depth-1
         if new_depth >= 0:
             for herf_tag in soup.find_all('a'):
                 href=self.get_href_link(herf_tag)
-                if href and self.is_link_available(href) and href.startswith(base_link):
+                if href and self.is_link_available(href) and href.startswith(base_link) and href != link:
                     logging.debug('put %s in url queue' %href)
-                    url_que.put((href, new_depth))
+                    url_que.put((href, new_depth, name))
 
 class MMTaobao(object):
 
-    def __init__(self):
+    def __init__(self, search_depth=4):
         self.base_link = 'http://mm.taobao.com/json/request_top_list.htm'
         self.page_encode = 'utf-8'
         self.save_folder = 'taobaomm'
-        self.find_depth = 3
+        self.find_depth = search_depth
 
     def get_page_content(self, page_num):
         payload = {'page': page_num}
@@ -222,11 +224,17 @@ class MMTaobao(object):
         for mm in mm_list:
             logging.info('mm info:\n%s' %str(mm))
             self.save_to_disk(mm.name,mm.age,mm.location,mm.home_page)
-            url_que.put((mm.home_page,self.find_depth))
+            url_que.put((mm.home_page,self.find_depth,mm.name))
         for u in url_analyzer:
             u.start()
         for i in image_analyzer:
             i.start()
+        for u in url_analyzer:
+            u.join()
+        for i in image_analyzer:
+            i.join()
+        url_que.join()
+        image_que.join()
         logging.info('compelete save mm info')
 
     def save_mm_info_from_file(self,info_file):
@@ -267,7 +275,10 @@ def test_photo_album():
         r = requests.get(url)
         f.write(r.text.encode('utf-8'))
 
-if __name__ == '__main__':
+def test_dowanlod_taobaomm():
     mt = MMTaobao()
     mm_list=mt.get_mm_taobao(total_page=1)
     mt.save_mm_info_by_mm_list(mm_list)
+
+if __name__ == '__main__':
+    test_dowanlod_taobaomm()
