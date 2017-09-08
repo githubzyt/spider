@@ -14,8 +14,6 @@ import time
 
 logging.basicConfig(level=logging.INFO,
                     format='(%(threadName)-9s) %(message)s',)
-logger = common.get_logger(__name__)
-logger.setLevel(logging.DEBUG)
 
 proxies={
     "http":"http://10.158.100.1:8080",
@@ -24,6 +22,11 @@ proxies={
 
 os.environ['http_proxy'] = 'http://10.158.100.1:8080'
 os.environ['https_proxy'] = 'http://10.158.100.1:8080'
+
+
+BUF_SIZE = 100
+image_que=Queue(BUF_SIZE)
+url_que = Queue(5000)
 
 class TaobaoMM(object):
 
@@ -42,9 +45,6 @@ location: %s
 home page: %s
 ''' % (self.name.encode(self.encoding), self.age.encode(self.encoding), self.location.encode(self.encoding), self.home_page.encode(self.encoding))
 
-BUF_SIZE = 100
-image_que=Queue(BUF_SIZE)
-url_que = Queue(5000)
 
 class ImageDownloader(threading.Thread):
 
@@ -60,12 +60,23 @@ class ImageDownloader(threading.Thread):
                 item = image_que.get()
                 logging.info('Getting ' + str(item) 
                               + ' : ' + str(image_que.qsize()) + ' items in image queue')
-                self.download(item)
+                self.download_img(item)
         return
 
     def download_img(self,item):
-        pass
-
+        logging.debug('photo_album_link=%s' %photo_album_link)
+        image_name=photo_album_link.split('/')[-1]
+        photo_dir=os.path.join(mm_folder,'photos')
+        if not os.path.exists(photo_dir):
+            os.makedirs(photo_dir)
+        image_full_path=os.path.join(photo_dir,image_name)
+        logging.debug('download file from %s to %s' %(photo_album_link,image_full_path))
+        r=requests.get(photo_album_link,stream=True)
+        with open(image_full_path,'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+        return image_full_path
 
 class URLAnalyzer(threading.Thread):
 
@@ -79,7 +90,7 @@ class URLAnalyzer(threading.Thread):
         while True:
             if not url_que.empty():
                 item = url_que.get()
-                logging.info('Getting ' + str(item) 
+                logging.debug('Getting ' + str(item) 
                               + ' : ' + str(url_que.qsize()) + ' items in url queue')
                 self.analysis_url(item)
         return
@@ -94,7 +105,7 @@ class URLAnalyzer(threading.Thread):
         if ori_img_link:
             ori_img_link=ori_img_link.strip() 
         if ori_img_link and ori_img_link.startswith('//'):
-            ori_img_link="http"+ori_img_link
+            ori_img_link="http:"+ori_img_link
         return ori_img_link
 
     def get_href_link(self,a_tag):
@@ -102,11 +113,10 @@ class URLAnalyzer(threading.Thread):
         if href:
             href=href.strip()
         if href and href.startswith('//'):
-            href='http'+href
+            href='http:'+href
         return href
 
     def analysis_url(self,item,page_encode='utf-8',base_link='http://mm.taobao.com/self'):
-        logger.info('in url analysis thread: %s %s' %(self.name, item))
         link, depth = item
         if not self.is_link_available(link):
             return
@@ -116,15 +126,14 @@ class URLAnalyzer(threading.Thread):
         for img_tag in soup.find_all('img'):
             img_link=self.get_img_link(img_tag)
             if img_link and self.is_link_available(img_link):
-                logging.info('get a new image link %s' %img_link)
+                logging.debug('put a new image link %s' %img_link)
                 image_que.put(img_link)
         new_depth=depth-1
         if new_depth >= 0:
             for herf_tag in soup.find_all('a'):
                 href=self.get_href_link(herf_tag)
-                logging.info('new href %s' %href)
                 if href and self.is_link_available(href) and href.startswith(base_link):
-                    logging.info('put %s in url queue' %href)
+                    logging.debug('put %s in url queue' %href)
                     url_que.put((href, new_depth))
 
 class MMTaobao(object):
@@ -139,7 +148,7 @@ class MMTaobao(object):
         payload = {'page': page_num}
         r = requests.get(self.base_link, params=payload)
         data = r.text.encode(self.page_encode)
-        logger.info('Get info from %s' % r.url)
+        logging.info('Get info from %s' % r.url)
         with open('mmtaobao.html', 'wb') as fd:
             fd.write(data)
         return data
@@ -175,13 +184,13 @@ class MMTaobao(object):
         return photo_album_link
 
     def download_img(self,photo_album_link,mm_folder):
-        logger.debug('photo_album_link=%s' %photo_album_link)
+        logging.debug('photo_album_link=%s' %photo_album_link)
         image_name=photo_album_link.split('/')[-1]
         photo_dir=os.path.join(mm_folder,'photos')
         if not os.path.exists(photo_dir):
             os.makedirs(photo_dir)
         image_full_path=os.path.join(photo_dir,image_name)
-        logger.debug('download file from %s to %s' %(photo_album_link,image_full_path))
+        logging.debug('download file from %s to %s' %(photo_album_link,image_full_path))
         r=requests.get(photo_album_link,stream=True)
         with open(image_full_path,'wb') as f:
             for chunk in r.iter_content(chunk_size=1024):
@@ -207,7 +216,7 @@ class MMTaobao(object):
 
 
     def save_mm_info_by_mm_list(self,mm_list):
-        logger.info('start save mm info')
+        logging.info('start save mm info')
         url_analyzer=[URLAnalyzer(name='url analyser %s' %i) for i in range(3)]
         image_analyzer=[ImageDownloader(name='image downloader %s' %i) for i in range(3)]
         for mm in mm_list:
@@ -218,7 +227,7 @@ class MMTaobao(object):
             u.start()
         for i in image_analyzer:
             i.start()
-        logger.info('compelete save mm info')
+        logging.info('compelete save mm info')
 
     def save_mm_info_from_file(self,info_file):
         mm_list=json.dumps(info_file)
